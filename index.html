@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>DRL 算法交互式选型指南</title>
+    <style>
+        /* ================= 全局与布局 ================= */
+        body { margin: 0; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; background-color: #f1f5f9; display: flex; height: 100vh; color: #1e293b; overflow: hidden; }
+        
+        /* 弹性分屏容器：初始 5:5 平分 */
+        .panel { padding: 30px; overflow-y: auto; transition: flex 0.6s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.4s ease; cursor: pointer; position: relative; flex: 5; }
+        .left-panel { background-color: #ffffff; border-right: 1px solid #e2e8f0; }
+        .right-panel { background-color: #f8fafc; display: flex; flex-direction: column; }
+        
+        /* 激活与休眠状态动态控制 */
+        .panel.active { flex: 7.5; cursor: default; }
+        .panel.inactive { flex: 2.5; opacity: 0.4; overflow: hidden; }
+        /* 阻止休眠侧的内部点击事件 */
+        .panel.inactive::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; } 
+
+        h2 { color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-top: 0; display: flex; align-items: center; white-space: nowrap; font-size: 1.4em;}
+        h2 span { font-size: 0.55em; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 12px; margin-left: 15px; font-weight: normal;}
+
+        /* ================= 左侧：横向展开的算法树 (Left-to-Right Tree) ================= */
+        .tree-container { padding: 20px 0; overflow-x: auto; overflow-y: auto; height: calc(100vh - 120px); }
+        .tree { display: inline-block; min-width: 100%; }
+        .tree ul { padding-left: 30px; position: relative; margin: 0; }
+        .tree > ul { padding-left: 0; }
+        .tree li { list-style-type: none; position: relative; padding: 12px 0 12px 25px; }
+        
+        /* 绘制垂直连接线 */
+        .tree li::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; border-left: 2px solid #cbd5e1; }
+        /* 最后一项的垂直线只画到卡片一半高度，避免多余向下延伸 */
+        .tree li:last-child::before { bottom: auto; height: 32px; } 
+        /* 绘制水平引出线 */
+        .tree li::after { content: ""; position: absolute; top: 32px; left: 0; width: 25px; border-top: 2px solid #cbd5e1; }
+        
+        /* 根节点清除多余线条与边距 */
+        .tree > ul > li::before, .tree > ul > li::after { display: none; }
+        .tree > ul > li { padding-left: 0; padding-top: 0; padding-bottom: 0; }
+        
+        /* 算法节点卡片样式 */
+        .tree a { display: inline-block; padding: 10px 18px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; font-weight: bold; color: #334155; text-decoration: none; transition: all 0.3s; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        /* 悬停动效：从左往右微微凸出并加深阴影 */
+        .tree a:hover { background: #3b82f6; color: white; border-color: #3b82f6; box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3); transform: translateX(4px) scale(1.02); }
+
+        /* ================= 右侧：交互式决策向导 ================= */
+        /* 面包屑路径 (历史记录) */
+        .breadcrumb-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; min-height: 30px; }
+        .breadcrumb { background: #dbeafe; color: #1d4ed8; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: bold; cursor: pointer; transition: all 0.3s; border: 1px solid #bfdbfe; display: flex; align-items: center; animation: fadeIn 0.4s ease forwards; }
+        .breadcrumb:hover { background: #bfdbfe; text-decoration: line-through; }
+        .breadcrumb::after { content: '×'; margin-left: 8px; font-size: 1.2em; line-height: 0.5; }
+
+        /* 问答核心显示区 */
+        .wizard-area { background: #ffffff; border-radius: 12px; padding: 25px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; flex-grow: 1; overflow-y: auto; transition: all 0.4s ease; }
+        .question-text { font-size: 1.3em; font-weight: bold; color: #0f172a; margin-bottom: 25px; line-height: 1.4; animation: slideIn 0.4s ease forwards; }
+        
+        /* 选项按钮网格 */
+        .options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; animation: slideIn 0.5s ease forwards; }
+        .option-btn { background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 10px; padding: 20px 15px; text-align: center; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .option-btn:hover { border-color: #3b82f6; background: #eff6ff; transform: translateY(-3px); box-shadow: 0 6px 12px rgba(59, 130, 246, 0.15); }
+        .option-title { font-weight: bold; font-size: 1.1em; color: #1e293b; margin-bottom: 8px; }
+        .option-desc { font-size: 0.85em; color: #64748b; }
+
+        /* 推荐算法卡片 (最终结果) */
+        .result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; animation: slideIn 0.5s ease forwards; }
+        .result-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; position: relative; border-top: 4px solid #3b82f6; box-shadow: 0 4px 6px rgba(0,0,0,0.02); transition: all 0.3s ease;}
+        .result-card:hover { transform: translateY(-3px); box-shadow: 0 8px 15px rgba(0,0,0,0.08); }
+        .result-card h4 { margin: 10px 0; font-size: 1.3em; color: #0f172a; }
+        .result-card p { font-size: 0.9em; color: #475569; line-height: 1.5; margin: 0; }
+        .tag-best { background: #dcfce7; color: #166534; font-size: 0.8em; padding: 4px 10px; border-radius: 4px; font-weight: bold; display: inline-block; }
+        .tag-alt { background: #f1f5f9; color: #475569; font-size: 0.8em; padding: 4px 10px; border-radius: 4px; font-weight: bold; display: inline-block; }
+
+        /* 动画设定 */
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div class="panel left-panel active" id="leftPanel" onclick="activatePanel('left')">
+        <h2>全栈算法拓扑 <span>点击左侧或右侧进行沉浸式分屏</span></h2>
+        <div class="tree-container">
+            <div class="tree">
+                <ul>
+                    <li>
+                        <a href="#">深度强化学习</a>
+                        <ul>
+                            <li>
+                                <a href="#">无模型</a>
+                                <ul>
+                                    <li>
+                                        <a href="#">基于值函数</a>
+                                        <ul>
+                                            <li>
+                                                <a href="#">基础改进</a>
+                                                <ul>
+                                                    <li><a href="#">DQN</a></li>
+                                                    <li><a href="#">Double DQN</a></li>
+                                                    <li><a href="#">Dueling DQN</a></li>
+                                                    <li><a href="#">PER</a></li>
+                                                    <li><a href="#">NoisyNet</a></li>
+                                                </ul>
+                                            </li>
+                                            <li>
+                                                <a href="#">分布与融合</a>
+                                                <ul>
+                                                    <li><a href="#">Ape-X</a></li>
+                                                    <li><a href="#">Rainbow</a></li>
+                                                    <li><a href="#">Agent57</a></li>
+                                                </ul>
+                                            </li>
+                                            <li>
+                                                <a href="#">分布评估</a>
+                                                <ul>
+                                                    <li><a href="#">C51</a></li>
+                                                    <li><a href="#">QR-DQN</a></li>
+                                                    <li><a href="#">IQN</a></li>
+                                                    <li><a href="#">FQF</a></li>
+                                                </ul>
+                                            </li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        <a href="#">基于策略梯度</a>
+                                        <ul>
+                                            <li>
+                                                <a href="#">同策略</a>
+                                                <ul>
+                                                    <li><a href="#">REINFORCE</a></li>
+                                                    <li><a href="#">A2C</a></li>
+                                                    <li><a href="#">A3C</a></li>
+                                                    <li><a href="#">TRPO</a></li>
+                                                    <li><a href="#">PPO</a></li>
+                                                    <li><a href="#">PPG</a></li>
+                                                    <li><a href="#">GRPO</a></li>
+                                                </ul>
+                                            </li>
+                                            <li>
+                                                <a href="#">异策略</a>
+                                                <ul>
+                                                    <li><a href="#">DDPG</a></li>
+                                                    <li><a href="#">TD3</a></li>
+                                                    <li><a href="#">SAC</a></li>
+                                                    <li><a href="#">REDQ</a></li>
+                                                    <li><a href="#">DroQ</a></li>
+                                                </ul>
+                                            </li>
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </li>
+                            <li>
+                                <a href="#">离线学习</a>
+                                <ul>
+                                    <li>
+                                        <a href="#">策略约束</a>
+                                        <ul>
+                                            <li><a href="#">BCQ</a></li>
+                                            <li><a href="#">BEAR</a></li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        <a href="#">价值惩罚</a>
+                                        <ul>
+                                            <li><a href="#">CQL</a></li>
+                                            <li><a href="#">TD3+BC</a></li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        <a href="#">隐式序列</a>
+                                        <ul>
+                                            <li><a href="#">IQL</a></li>
+                                            <li><a href="#">Decision Transformer</a></li>
+                                            <li><a href="#">Trajectory Transformer</a></li>
+                                            <li><a href="#">AWAC</a></li>
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </li>
+                            <li>
+                                <a href="#">多智能体</a>
+                                <ul>
+                                    <li>
+                                        <a href="#">价值分解</a>
+                                        <ul>
+                                            <li><a href="#">VDN</a></li>
+                                            <li><a href="#">QMIX</a></li>
+                                            <li><a href="#">QTRAN</a></li>
+                                            <li><a href="#">QPLEX</a></li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        <a href="#">集中训练分布式执行</a>
+                                        <ul>
+                                            <li><a href="#">MADDPG</a></li>
+                                            <li><a href="#">COMA</a></li>
+                                            <li><a href="#">MAPPO</a></li>
+                                            <li><a href="#">MATD3</a></li>
+                                            <li><a href="#">HAPPO</a></li>
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </li>
+                            <li>
+                                <a href="#">稀疏探索</a>
+                                <ul>
+                                    <li>
+                                        <a href="#">内在动机</a>
+                                        <ul>
+                                            <li><a href="#">ICM</a></li>
+                                            <li><a href="#">RND</a></li>
+                                            <li><a href="#">NGU</a></li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        <a href="#">目标重置</a>
+                                        <ul>
+                                            <li><a href="#">HER</a></li>
+                                            <li><a href="#">GCS</a></li>
+                                            <li><a href="#">Go-Explore</a></li>
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </li>
+                            <li>
+                                <a href="#">模型与元学习</a>
+                                <ul>
+                                    <li>
+                                        <a href="#">世界模型</a>
+                                        <ul>
+                                            <li><a href="#">MBPO</a></li>
+                                            <li><a href="#">PETS</a></li>
+                                            <li><a href="#">MuZero</a></li>
+                                            <li><a href="#">Dreamer</a></li>
+                                            <li><a href="#">DayDreamer</a></li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        <a href="#">元适应</a>
+                                        <ul>
+                                            <li><a href="#">MAML</a></li>
+                                            <li><a href="#">PEARL</a></li>
+                                            <li><a href="#">RMA</a></li>
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+<div class="panel right-panel inactive" id="rightPanel" onclick="activatePanel('right')">
+        <h2>工程级算法选型向导 <span>点击进行沉浸式交互筛选</span></h2>
+        
+        <div class="breadcrumb-container" id="breadcrumbArea"></div>
+
+        <div class="wizard-area" id="wizardArea"></div>
+    </div>
+
+    <script>
+        // --- 1. 弹性分屏交互逻辑 ---
+        function activatePanel(target) {
+            const leftPanel = document.getElementById('leftPanel');
+            const rightPanel = document.getElementById('rightPanel');
+            
+            if (target === 'left' && !leftPanel.classList.contains('active')) {
+                leftPanel.classList.add('active'); leftPanel.classList.remove('inactive');
+                rightPanel.classList.add('inactive'); rightPanel.classList.remove('active');
+            } else if (target === 'right' && !rightPanel.classList.contains('active')) {
+                rightPanel.classList.add('active'); rightPanel.classList.remove('inactive');
+                leftPanel.classList.add('inactive'); leftPanel.classList.remove('active');
+            }
+        }
+
+        // --- 2. 深度扩充的算法决策树数据流 (JSON 知识库) ---
+        const decisionData = {
+            'start': {
+                type: 'question',
+                text: '阶段一：您的训练数据来源及环境交互限制是什么？',
+                options: [
+                    { title: '静态离线数据', desc: '仅有历史运行日志，绝对禁止与环境在线交互试错', next: 'offline_quality' },
+                    { title: '在线交互环境', desc: '可在仿真引擎或具备安全限制的物理硬件上持续交互', next: 'agent_count' }
+                ]
+            },
+
+            // --- 离线 RL 分支 ---
+            'offline_quality': {
+                type: 'question',
+                text: '阶段二：您的离线数据集质量如何？',
+                options: [
+                    { title: '高质量专家数据', desc: '几乎全为最优轨迹（如资深操作员的遥控记录）', next: 'offline_expert' },
+                    { title: '混合/次优数据', desc: '包含大量随机试错、失败及平庸操作的数据集', next: 'offline_mixed' }
+                ]
+            },
+            'offline_expert': {
+                type: 'result',
+                text: '针对【高质量离线数据】，过度保守会损失性能，推荐以下算法：',
+                cards: [
+                    { tag: 'tag-best', tagText: '工程首选', title: 'TD3+BC (TD3 + Behavioral Cloning)', desc: '大道至简的标杆。在标准 TD3 的 Actor 更新中直接加入行为克隆正则化，强迫模型输出不偏离专家动作。代码极简，工程落地成功率极高。' },
+                    { tag: 'tag-alt', tagText: '生成式约束', title: 'BCQ (Batch-Constrained Q-learning)', desc: '使用 VAE (变分自编码器) 学习数据集的动作分布，在生成域内进行 Q 值最大化，有效防止推断出未见过的危险动作。' }
+                ]
+            },
+            'offline_mixed': {
+                type: 'result',
+                text: '针对【混合次优离线数据】，需极力防止外推过估计，推荐以下算法：',
+                cards: [
+                    { tag: 'tag-best', tagText: '理论严谨', title: 'CQL (Conservative Q-Learning)', desc: '在损失函数中注入惩罚项，压低所有动作的 Q 值，同时推高真实数据动作的 Q 值，学习真实价值的严格下界，彻底锁死分布外动作的风险。' },
+                    { tag: 'tag-best', tagText: '隐式评估', title: 'IQL (Implicit Q-Learning)', desc: '完全避免查询未见动作的价值！利用 Expectile Regression (分位数回归拓展) 仅在实际发生的状态转移上逼近最优价值函数，目前离线连续控制的最优解之一。' },
+                    { tag: 'tag-alt', tagText: '序列大模型', title: 'Decision Transformer (DT)', desc: '将 RL 转化为序列建模问题。利用 GPT 架构，输入 (Return, State, Action) 序列，通过自回归生成动作。在海量次优数据拼接能力上表现惊艳。' }
+                ]
+            },
+
+            // --- 在线交互分支 ---
+            'agent_count': {
+                type: 'question',
+                text: '阶段二：控制系统中包含几个独立决策的智能体？',
+                options: [
+                    { title: '多智能体 (Multi-Agent)', desc: '集群协同、编队飞行、多车调度等', next: 'marl_type' },
+                    { title: '单智能体 (Single-Agent)', desc: '专注于单一无人机、无人车或机械臂的精细控制', next: 'action_space' }
+                ]
+            },
+
+            // --- 多智能体 (MARL) 分支 ---
+            'marl_type': {
+                type: 'question',
+                text: '阶段三：集群任务的动作空间与协同要求是？',
+                options: [
+                    { title: '离散动作 + 纯合作', desc: '如网格化路径分配、离散通信节点调度', next: 'marl_discrete' },
+                    { title: '连续动作 + CTDE', desc: '底层连续运动学控制，且允许集中式训练', next: 'marl_continuous' }
+                ]
+            },
+            'marl_discrete': {
+                type: 'result',
+                text: '针对【离散动作的纯合作任务】，价值分解 (Value Decomposition) 是最佳路径：',
+                cards: [
+                    { tag: 'tag-best', tagText: '主流基线', title: 'QMIX', desc: '引入一个权重严格为正的 Mixing Network，满足 IGM 单调性约束，将全局奖励完美分解给各个局部 Agent，天然支持去中心化执行。' },
+                    { tag: 'tag-alt', tagText: '基础探索', title: 'VDN (Value-Decomposition Networks)', desc: 'QMIX 的前身，直接将个体 Q 值线性相加等于全局 Q 值。适用于各智能体贡献相互独立、无复杂非线性耦合的简单场景。' },
+                    { tag: 'tag-alt', tagText: '表达力突破', title: 'QPLEX', desc: '基于 Duplex Dueling 架构，突破了 QMIX 单调性约束导致的表达能力瓶颈，能拟合更复杂的联合价值矩阵。' }
+                ]
+            },
+            'marl_continuous': {
+                type: 'result',
+                text: '针对【连续动作的复杂协同控制】，集中训练分布式执行 (CTDE) 架构不可或缺：',
+                cards: [
+                    { tag: 'tag-best', tagText: '同策略王者', title: 'MAPPO (Multi-Agent PPO)', desc: '将 PPO 扩展至多智能体。中心化的 Critic 聚合全局状态消除环境非平稳性，各个 Actor 根据局部观测稳定输出。超参数调优极度鲁棒。' },
+                    { tag: 'tag-best', tagText: '异构利器', title: 'HAPPO (Heterogeneous-Agent PPO)', desc: '完美解决无人机与无人车混编时（异构动作空间）的信任域单调递减问题。通过序列化 (Sequential) 更新机制，保证集群整体性能严格单调上升。' },
+                    { tag: 'tag-alt', tagText: '异策略经典', title: 'MADDPG', desc: 'DDPG 的多智能体扩展，每个智能体拥有一个中心化 Critic。样本效率高于 MAPPO，但在复杂维度下更容易受 Actor 目标策略波动影响。' }
+                ]
+            },
+
+            // --- 单智能体动作空间分支 ---
+            'action_space': {
+                type: 'question',
+                text: '阶段三：底层执行机构的输出控制信号类型是？',
+                options: [
+                    { title: '离散动作 (Discrete)', desc: '有限集合：如上下左右、特定档位切换', next: 'discrete_complexity' },
+                    { title: '连续动作 (Continuous)', desc: '无限空间：如底盘速度指令、电机 PWM、姿态角', next: 'continuous_env' }
+                ]
+            },
+
+            // --- 离散动作分支 ---
+            'discrete_complexity': {
+                type: 'question',
+                text: '阶段四：离散任务的环境复杂度与风险敏感度如何？',
+                options: [
+                    { title: '常规基础任务', desc: '追求代码极简与运行效率，常规迷宫或简单路由', next: 'discrete_baseline' },
+                    { title: '风险敏感任务', desc: '避障或物理环境中，需评估“最坏情况”的概率分布', next: 'discrete_distributional' },
+                    { title: '超高维度复杂任务', desc: '如雅达利像素级游戏，追求极致的 SOTA 性能', next: 'discrete_ultimate' }
+                ]
+            },
+            'discrete_baseline': {
+                type: 'result',
+                text: '针对【常规基础离散任务】，推荐使用稳健的 DQN 家族变体：',
+                cards: [
+                    { tag: 'tag-best', tagText: '扎实基线', title: 'D3QN (Dueling Double DQN)', desc: 'Double 机制解耦选择与评估（消除过估计）；Dueling 机制剥离状态价值与优势（加速非关键状态收敛）。两者结合是离散控制的标准起手式。' },
+                    { tag: 'tag-alt', tagText: '效率提升', title: 'D3QN + PER', desc: '在 D3QN 基础上增加 Prioritized Experience Replay (优先经验回放)，根据 TD 误差动态分配采样概率，使网络聚焦于“最出乎意料”的高价值样本。' }
+                ]
+            },
+            'discrete_distributional': {
+                type: 'result',
+                text: '针对【风险敏感型任务】，必须使用分布式强化学习 (Distributional RL)：',
+                cards: [
+                    { tag: 'tag-best', tagText: '经典分布', title: 'C51', desc: '不再预测期望 Q 值，而是将价值空间划分为 51 个固定原子，预测各个价值出现的概率。极大提升了底层特征表达的丰富度。' },
+                    { tag: 'tag-best', tagText: 'SOTA 基准', title: 'IQN (Implicit Quantile Networks)', desc: '通过分位数回归网络，可以针对任意连续的概率风险进行评估（如 CVaR），在无人系统安全避障的保守决策中极具潜力。' },
+                    { tag: 'tag-alt', tagText: '完全参数化', title: 'FQF (Fully Parameterized Quantile Function)', desc: '不仅学习分位数的价值，还同时学习分位数的位置划分，是目前分布 RL 中拟合精度最高的算法之一。' }
+                ]
+            },
+            'discrete_ultimate': {
+                type: 'result',
+                text: '针对【超高维极复杂任务】，融合一切有效机制：',
+                cards: [
+                    { tag: 'tag-best', tagText: '六合一巨兽', title: 'Rainbow DQN', desc: '暴力融合 Double, Dueling, PER, Multi-step, C51 和 NoisyNet。虽然计算开销巨大，但综合性能在离散动作域至今难逢敌手。' },
+                    { tag: 'tag-alt', tagText: '长期探索', title: 'Agent57', desc: '在 Rainbow 基础上引入 Episodic 记忆与分离的长期/短期探索机制，首个在所有 57 款 Atari 游戏中超越人类基准的算法。' }
+                ]
+            },
+
+            // --- 连续动作分支 ---
+            'continuous_env': {
+                type: 'question',
+                text: '阶段四：您的训练部署环境属于以下哪种类型？',
+                options: [
+                    { title: '极度稀疏奖励', desc: '在复杂迷宫或三维空间中，仅在到达终点才给予非零奖励', next: 'exploration_type' },
+                    { title: '密集反馈 & 固定动力学', desc: '奖励信号平滑，且物理参数(质量、摩擦力)在训练中基本不变', next: 'continuous_dense' },
+                    { title: 'Sim2Real & 物理参数突变', desc: '在仿真训练，需部署到真实硬件；或负载质量经常突变', next: 'sim2real_dynamics' }
+                ]
+            },
+
+            // --- 连续动作：探索分支 ---
+            'exploration_type': {
+                type: 'question',
+                text: '阶段五：稀疏奖励任务的核心目标是？',
+                options: [
+                    { title: '多目标触达', desc: '在空间中移动到给定的任意目标坐标 (Goal-Conditioned)', next: 'exp_goal' },
+                    { title: '无目标纯漫游探索', desc: '在未知地图中尽可能多地走遍所有角落', next: 'exp_intrinsic' }
+                ]
+            },
+            'exp_goal': {
+                type: 'result',
+                text: '针对【稀疏反馈的多目标触达】，利用事后经验重放是唯一解：',
+                cards: [
+                    { tag: 'tag-best', tagText: '化腐朽为神奇', title: 'DDPG / SAC + HER (Hindsight Exp Replay)', desc: '将物理上未命中目标的“失败”轨迹的最后停靠点，重新标记为“虚拟目标”。凭空将负反馈转化为成功案例，解决冷启动死锁。' },
+                    { tag: 'tag-alt', tagText: '高维图搜索', title: 'GCS (Goal-Conditioned SAC)', desc: '结合图规划网络，利用 SAC 学习局部两点间的短程可达性，高层网络利用图搜索突破极长视距的稀疏障碍。' }
+                ]
+            },
+            'exp_intrinsic': {
+                type: 'result',
+                text: '针对【无目标纯漫游探索】，需通过内在动机生成伪奖励：',
+                cards: [
+                    { tag: 'tag-best', tagText: '好奇心驱动', title: 'PPO + ICM (Intrinsic Curiosity Module)', desc: '训练正向动力学网络预测下一状态。预测误差越大的状态代表越“新奇”，给予高额伪奖励，驱动智能体主动走向未知区域。' },
+                    { tag: 'tag-best', tagText: '蒸馏判别', title: 'PPO + RND (Random Network Distillation)', desc: '使用一个随机固定的网络生成目标特征，预测网络去拟合它。针对新状态，由于未经过训练，预测误差飙升，从而稳定产生探索红利。' }
+                ]
+            },
+
+            // --- 连续动作：密集奖励分支 ---
+            'continuous_dense': {
+                type: 'question',
+                text: '阶段五：基于密集奖励，您更看重哪项工程指标？',
+                options: [
+                    { title: '极高稳定与高保真仿真', desc: '在 Isaac Sim 等高并发引擎中训练，容错率低，求稳', next: 'dense_on_policy' },
+                    { title: '极高样本效率与边缘端', desc: '在物理算力受限（如 Jetson Nano）的实车上硬采数据', next: 'dense_off_policy' }
+                ]
+            },
+            'dense_on_policy': {
+                type: 'result',
+                text: '追求【极致稳定性与海量吞吐】，同策略 (On-Policy) 家族是最佳选择：',
+                cards: [
+                    { tag: 'tag-best', tagText: '工业万金油', title: 'PPO (Proximal Policy Optimization)', desc: '通过重要性采样与 Clip 裁剪，强制新旧策略散度可控，保证单调递增。即使网络结构再庞大，也能极其稳健地收敛。' },
+                    { tag: 'tag-best', tagText: '前沿轻量', title: 'GRPO (Group Relative Policy Optimization)', desc: '2024 新星！完全抛弃了消耗海量显存的 Critic 价值网络，通过在一个 Batch 内计算组内相对优势 (Relative Advantage) 更新策略，大模型时代首选。' },
+                    { tag: 'tag-alt', tagText: '样本复用', title: 'PPG (Phasic Policy Gradient)', desc: '将策略更新（保持原汁原味）和价值函数拟合（可多轮复用重叠训练）分离为两个阶段，在 PPO 基础上大幅提升数据利用率。' }
+                ]
+            },
+            'dense_off_policy': {
+                type: 'result',
+                text: '面对昂贵的数据获取成本，追求【极高样本效率】，异策略家族当仁不让：',
+                cards: [
+                    { tag: 'tag-best', tagText: '连续王者', title: 'SAC (Soft Actor-Critic)', desc: '最大熵机制带来无可匹敌的动作平滑性与探索鲁棒性，自动温度调整免除调参噩梦。真车端到端部署必跑的 Baseline！' },
+                    { tag: 'tag-best', tagText: '极限压榨', title: 'DroQ', desc: '在少量数据下实现极高的更新数据比 (UTD)。通过巧妙引入 Dropout 防止 Q 网络在高频拟合中崩溃，是物理世界快速试错的神器。' },
+                    { tag: 'tag-alt', tagText: '确定性平滑', title: 'TD3 (Twin Delayed DDPG)', desc: '基于确定性策略，执行时无随机噪声抖动。引入截断双 Q 与延迟更新，极大地消除了 DDPG 的脆弱性，计算开销略低于 SAC。' }
+                ]
+            },
+
+            // --- 连续动作：Sim2Real 分支 ---
+            'sim2real_dynamics': {
+                type: 'result',
+                text: '针对【物理参数迁移与突变】，必须跨越 Sim-to-Real 的鸿沟：',
+                cards: [
+                    { tag: 'tag-best', tagText: '保守鲁棒', title: 'Domain Randomization (领域随机化)', desc: '简单粗暴：在仿真训练时给质量、摩擦、延迟注入极宽的均匀分布噪声。获得一个极其保守但能在物理世界“凑合用”的不死策略。' },
+                    { tag: 'tag-best', tagText: '元适应标杆', title: 'RMA (Rapid Motor Adaptation)', desc: '四足机器人/复杂硬件部署标配！第一阶段在仿真中提取环境参数的隐表示 $z$；第二阶段训练一个历史时序编码器预测 $z$。实车部署时，利用历史数据在线辨识动力学，动态调整策略。' },
+                    { tag: 'tag-alt', tagText: '世界模型', title: 'DayDreamer / DreamerV3', desc: '直接利用物理系统在线收集数据，在隐空间中构建环境的完整“世界模型”。策略在纯“幻觉”中做百万级推演，实车一小时即可学会行走。' }
+                ]
+            }
+        };
+
+        // --- 3. DOM 操作与渲染引擎 ---
+        let historyPath = []; // 存储结构: { id: 'node_id', optionTitle: '点击的选项名' }
+
+        const breadcrumbArea = document.getElementById('breadcrumbArea');
+        const wizardArea = document.getElementById('wizardArea');
+
+        // 页面加载时初始化
+        window.onload = () => {
+            renderNode('start');
+        };
+
+        function renderNode(nodeId, optionTitle = null) {
+            if (optionTitle) {
+                historyPath.push({ id: nodeId, title: optionTitle });
+            }
+            
+            const node = decisionData[nodeId];
+            if (!node) return; // 容错
+            
+            updateBreadcrumbs();
+            wizardArea.innerHTML = '';
+
+            // 如果是中间提问节点
+            if (node.type === 'question') {
+                const qDiv = document.createElement('div');
+                qDiv.className = 'question-text';
+                qDiv.innerText = node.text;
+                wizardArea.appendChild(qDiv);
+
+                const optGrid = document.createElement('div');
+                optGrid.className = 'options-grid';
+                
+                node.options.forEach(opt => {
+                    const btn = document.createElement('div');
+                    btn.className = 'option-btn';
+                    btn.innerHTML = `<div class="option-title">${opt.title}</div><div class="option-desc">${opt.desc}</div>`;
+                    btn.onclick = () => renderNode(opt.next, opt.title);
+                    optGrid.appendChild(btn);
+                });
+                wizardArea.appendChild(optGrid);
+
+            // 如果是叶子推荐节点
+            } else if (node.type === 'result') {
+                const textDiv = document.createElement('div');
+                textDiv.className = 'question-text';
+                textDiv.innerText = node.text;
+                wizardArea.appendChild(textDiv);
+
+                const resGrid = document.createElement('div');
+                resGrid.className = 'result-grid';
+
+                node.cards.forEach(card => {
+                    const cDiv = document.createElement('div');
+                    cDiv.className = 'result-card';
+                    cDiv.innerHTML = `
+                        <span class="${card.tag}">${card.tagText}</span>
+                        <h4>${card.title}</h4>
+                        <p>${card.desc}</p>
+                    `;
+                    resGrid.appendChild(cDiv);
+                });
+                wizardArea.appendChild(resGrid);
+                
+                // 添加重置按钮
+                const resetBtn = document.createElement('div');
+                resetBtn.style.marginTop = '30px';
+                resetBtn.style.textAlign = 'center';
+                resetBtn.innerHTML = `<button onclick="rollbackTo(0)" style="padding:10px 25px; border:none; border-radius:8px; background:#3b82f6; color:white; font-weight:bold; cursor:pointer; box-shadow:0 4px 6px rgba(59,130,246,0.3); transition:all 0.3s;">🔄 重新开始选型</button>`;
+                wizardArea.appendChild(resetBtn);
+            }
+        }
+
+        // --- 4. 面包屑路径与回退机制 ---
+        function updateBreadcrumbs() {
+            breadcrumbArea.innerHTML = '';
+            historyPath.forEach((step, index) => {
+                const bTag = document.createElement('div');
+                bTag.className = 'breadcrumb';
+                bTag.innerText = step.title;
+                bTag.title = "点击撤销此步及之后的所有选择";
+                bTag.onclick = () => rollbackTo(index);
+                breadcrumbArea.appendChild(bTag);
+            });
+        }
+
+        function rollbackTo(index) {
+            historyPath = historyPath.slice(0, index);
+            const targetNodeId = historyPath.length > 0 ? historyPath[historyPath.length - 1].id : 'start';
+            renderNode(targetNodeId);
+        }
+    </script>
+</body>
+</html>
